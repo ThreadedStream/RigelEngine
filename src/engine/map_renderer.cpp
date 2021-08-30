@@ -43,14 +43,6 @@ const auto AUTO_SCROLL_PX_PER_SECOND_HORIZONTAL = 30;
 const auto AUTO_SCROLL_PX_PER_SECOND_VERTICAL = 60;
 
 
-base::Vector wrapBackgroundOffset(base::Vector offset)
-{
-  return {
-    offset.x % GameTraits::viewPortWidthPx,
-    offset.y % GameTraits::viewPortHeightPx};
-}
-
-
 base::Vector backdropOffset(
   const base::Vector& cameraPosition,
   const BackdropScrollMode scrollMode,
@@ -65,9 +57,9 @@ base::Vector backdropOffset(
 
   if (parallaxHorizontal || parallaxBoth)
   {
-    return wrapBackgroundOffset(
-      {parallaxHorizontal ? cameraPosition.x * PARALLAX_FACTOR : 0,
-       parallaxBoth ? cameraPosition.y * PARALLAX_FACTOR : 0});
+    return {
+      parallaxHorizontal ? cameraPosition.x * PARALLAX_FACTOR : 0,
+      parallaxBoth ? cameraPosition.y * PARALLAX_FACTOR : 0};
   }
   else if (autoScrollX || autoScrollY)
   {
@@ -180,33 +172,57 @@ void MapRenderer::renderForeground(
 }
 
 
+renderer::TexCoords MapRenderer::calculateBackdropTexCoords(
+  const base::Vector& cameraPosition,
+  const base::Extents& viewPortSize) const
+{
+  const auto offset =
+    backdropOffset(cameraPosition, mScrollMode, mBackdropAutoScrollOffset);
+
+  const auto offsetX = offset.x / float(GameTraits::viewPortWidthPx);
+  const auto offsetY = offset.y / float(GameTraits::viewPortHeightPx);
+
+  const auto windowWidth = float(mpRenderer->currentRenderTargetSize().width);
+  const auto windowHeight = float(mpRenderer->currentRenderTargetSize().height);
+
+  const auto scaleY = windowHeight / mBackdropTexture.height();
+
+  const auto isOriginalSize =
+    mBackdropTexture.width() == GameTraits::viewPortWidthPx &&
+    mBackdropTexture.height() == GameTraits::viewPortHeightPx;
+
+  const auto needsAspectRatioCorrection =
+    isOriginalSize && windowHeight != GameTraits::viewPortHeightPx;
+  const auto correctionFactor = needsAspectRatioCorrection ? 1.0f / 1.2f : 1.0f;
+  const auto scaledWidth = scaleY * mBackdropTexture.width() * correctionFactor;
+  const auto remappingFactor = windowWidth / scaledWidth;
+
+  const auto targetWidth = float(data::tilesToPixels(viewPortSize.width)) *
+    mpRenderer->globalScale().x;
+  const auto targetHeight = float(data::tilesToPixels(viewPortSize.height)) *
+    mpRenderer->globalScale().y;
+  const auto visibleTargetPortionX = targetWidth / windowWidth;
+  const auto visibleTargetPortionY = targetHeight / windowHeight;
+
+  const auto left = offsetX;
+  const auto top = offsetY;
+  const auto right = left + visibleTargetPortionX * remappingFactor;
+  const auto bottom = top + visibleTargetPortionY;
+
+  return renderer::TexCoords{left, top, right, bottom};
+}
+
+
 void MapRenderer::renderBackdrop(
   const base::Vector& cameraPosition,
   const base::Extents& viewPortSize) const
 {
-  const auto numRepetitions = base::integerDivCeil(
-    tilesToPixels(viewPortSize.width), GameTraits::viewPortWidthPx);
-
-  const auto sourceRectSize = base::Extents{
-    mBackdropTexture.width() * numRepetitions, mBackdropTexture.height()};
-  const auto destRectSize = base::Extents{
-    GameTraits::viewPortWidthPx * numRepetitions, GameTraits::viewPortHeightPx};
-
-  const auto widthFactor =
-    mBackdropTexture.width() / GameTraits::viewPortWidthPx;
-  const auto offset =
-    backdropOffset(cameraPosition, mScrollMode, mBackdropAutoScrollOffset) *
-    widthFactor;
-
   const auto saved = renderer::saveState(mpRenderer);
   mpRenderer->setTextureRepeatEnabled(true);
   mpRenderer->drawTexture(
     mBackdropTexture.data(),
-    renderer::toTexCoords(
-      {offset, sourceRectSize},
-      mBackdropTexture.width(),
-      mBackdropTexture.height()),
-    {{}, destRectSize});
+    calculateBackdropTexCoords(cameraPosition, viewPortSize),
+    {{}, data::tileExtentsToPixelExtents(viewPortSize)});
 }
 
 
