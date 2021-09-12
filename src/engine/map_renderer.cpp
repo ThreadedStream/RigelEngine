@@ -176,27 +176,63 @@ renderer::TexCoords MapRenderer::calculateBackdropTexCoords(
   const base::Vector& cameraPosition,
   const base::Extents& viewPortSize) const
 {
+  // This function determines the texture coordinates we need to use for
+  // drawing the backdrop into the current view port (which could be
+  // wide-screen or classic), while taking the current backdrop offset (either
+  // from parallax, or automatic scrolling) into account. Essentially, we want
+  // to determine the rectangle defining the section of the backdrop graphic
+  // that we need to display. The rectangle might be wider than the backdrop
+  // itself, which then causes the backdrop texture to wrap around and repeat
+  // thanks to texture repeat being enabled when drawing the backdrop.
+  //
+  // The logic is somewhat complicated, because it needs to work for any
+  // background image resolution, and any background image aspect ratio - we
+  // want to support things like wide backgrounds. For original artwork and
+  // replacements in the same resolution, we need to take aspect ratio
+  // correction into account, but only when doing per-element upscaling.
+  // For higher resolution replacements, we want to maintain the artwork's
+  // aspect ratio, and we want to display it correctly even if the aspect
+  // ratio of the current screen resolution is different (e.g., showing a
+  // 16:9 background image on a 16:10 screen).
+
+  // First, compute the offset
   const auto offset =
     backdropOffset(cameraPosition, mScrollMode, mBackdropAutoScrollOffset);
-
   const auto offsetX = offset.x / float(GameTraits::viewPortWidthPx);
   const auto offsetY = offset.y / float(GameTraits::viewPortHeightPx);
 
+  // Now we need to determine how to map the viewport rectangle (which is
+  // not the entire screen) into the background image's texture space.
+  // The idea is that we always scale the background vertically to match
+  // the current render target size, and then work out the width from there.
+  // So let's start with determining the scale factor.
   const auto windowWidth = float(mpRenderer->currentRenderTargetSize().width);
   const auto windowHeight = float(mpRenderer->currentRenderTargetSize().height);
-
   const auto scaleY = windowHeight / mBackdropTexture.height();
 
+  // Now that we know the scaling factor, we can determine the ratio between
+  // the screen's width and the scaled background's width. Here we need to
+  // take aspect ratio correction into account, in case we are working with
+  // original art resolution and per-element upscaling.
   const auto isOriginalSize =
     mBackdropTexture.width() == GameTraits::viewPortWidthPx &&
     mBackdropTexture.height() == GameTraits::viewPortHeightPx;
-
   const auto needsAspectRatioCorrection =
     isOriginalSize && windowHeight != GameTraits::viewPortHeightPx;
   const auto correctionFactor = needsAspectRatioCorrection ? 1.0f / 1.2f : 1.0f;
+
+  // We can now determine the width of the background when applying scaling,
+  // and based on that, we can determine the "remapping factor" that we
+  // need to apply in order to avoid horizontal stretching.
+  // Basically, this is a measure of how much wider/narrower the background
+  // image is in relation to the screen.
   const auto scaledWidth = scaleY * mBackdropTexture.width() * correctionFactor;
   const auto remappingFactor = windowWidth / scaledWidth;
 
+  // Finally, we need to know what portion of the full screen is occupied by
+  // the view port. Basically, what percentage of the background size can we
+  // use to match the dimensions of the destination rectangle used for
+  // drawing, which is equal in size to the current view port.
   const auto targetWidth = float(data::tilesToPixels(viewPortSize.width)) *
     mpRenderer->globalScale().x;
   const auto targetHeight = float(data::tilesToPixels(viewPortSize.height)) *
@@ -204,6 +240,8 @@ renderer::TexCoords MapRenderer::calculateBackdropTexCoords(
   const auto visibleTargetPortionX = targetWidth / windowWidth;
   const auto visibleTargetPortionY = targetHeight / windowHeight;
 
+  // With all that, we can now define our rectangle in texture coordinate
+  // space (i.e. from 0..1 on both axes).
   const auto left = offsetX;
   const auto top = offsetY;
   const auto right = left + visibleTargetPortionX * remappingFactor;
