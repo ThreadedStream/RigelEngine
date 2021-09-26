@@ -16,15 +16,16 @@
 
 #include "duke_script_loader.hpp"
 
-#include "base/string_utils.hpp"
 #include "base/warnings.hpp"
 #include "data/game_traits.hpp"
+#include "base/string_utils.hpp"
 
 #include <algorithm>
 #include <cassert>
 #include <cctype>
-#include <optional>
 #include <sstream>
+#include <functional>
+#include <optional>
 #include <stdexcept>
 #include <unordered_set>
 
@@ -53,6 +54,113 @@ using data::GameTraits;
 
 namespace
 {
+
+using namespace rigel::strings;
+
+using CommandAction =
+  std::function<std::optional<Action>(const std::string&, std::istream&)>;
+
+// clang-format off
+std::unordered_map<std::string, CommandAction> singleActionCommands = {
+      {"FADEIN", LAMBDA_DEF(Action{FadeIn{}}, )},
+      {"FADEOUT", LAMBDA_DEF(Action{FadeOut{}}, )},
+      {"DELAY",
+       // clang-format off
+     LAMBDA_DEF(
+       Action{Delay{amount}},
+       int amount = 0;
+       lineTextStream >> amount;
+       if (amount <= 0) {
+         throw std::invalid_argument("Invalid DELAY command in Duke Script file");
+       })},
+    {"BABBLEON",
+    LAMBDA_DEF(
+      Action{AnimateNewsReporter{duration}},
+      int duration = 0;
+      lineTextStream >> duration;
+      if (duration <= 0)
+      {
+        throw std::invalid_argument("Invalid BABBLEON command in Duke Script file");
+      }
+    )},
+    {"BABBLEOFF", LAMBDA_DEF(Action{StopNewsReporterAnimation{}}, )},
+    {"NOSOUNDS", LAMBDA_DEF(DisableMenuFunctionality{}, )},
+    {"KEYS", LAMBDA_DEF(Action{ShowKeyBindings{}}, )},
+    {"GETNAMES",
+    LAMBDA_DEF (
+      Action{ShowSaveSlots{slot}},
+      int slot = 0;
+      lineTextStream >> slot;
+      if (slot < 0 || slot >= 8)
+      {
+      throw std::invalid_argument("Invalid GETNAMES command in Duke Script file");
+      }
+    )},
+    {"PAK",
+    LAMBDA_DEF (
+      (Action{DrawSprite{0, 0, 146, 0}}),
+      // [P]ress [A]ny [K]ey - this is a shorthand for displaying actor nr. 146,
+      // which is an image of the text "Press any key to continue".
+    ) },
+    {"LOADRAW",
+    LAMBDA_DEF(
+      Action{ShowFullScreenImage{imageName}},
+      std::string imageName;
+      lineTextStream >> imageName;
+      strings::trim(imageName);
+      if (imageName.empty()) {
+        throw std::invalid_argument("Invalid LOADRAW command in Duke Script file");
+      }
+    )},
+    {"Z",
+    LAMBDA_DEF(
+      Action{ShowMenuSelectionIndicator{yPos}},
+      int yPos = 0;
+      lineTextStream >> yPos;
+    )},
+    {"GETPAL",
+    LAMBDA_DEF(
+      Action{SetPalette{paletteFile}},
+      std::string paletteFile;
+      lineTextStream >> paletteFile;
+      strings::trim(paletteFile);
+      if (paletteFile.empty()) {
+        throw std::invalid_argument("Invalid LOADRAW command in Duke Script file");
+      }
+    )},
+    {"WAIT",
+    LAMBDA_DEF(
+      Action{WaitForUserInput{}},
+    ) },
+    {"SHIFTWIN",
+    LAMBDA_DEF(
+      Action{EnableTextOffset{}},
+    )},
+    {"EXITTODEMO",
+    LAMBDA_DEF(
+      Action{EnableTimeOutToDemo{}},
+    )},
+    {"TOGGS",
+    LAMBDA_DEF(
+      (Action{SetupCheckBoxes{xPos, definitions}}),
+      int xPos = 0;
+      int count = 0;
+      lineTextStream >> xPos;
+      lineTextStream >> count;
+
+      std::vector<SetupCheckBoxes::CheckBoxDefinition> definitions;
+      for (int i = 0; i < count; ++i) {
+        SetupCheckBoxes::CheckBoxDefinition definition{0 COMMA 0};
+        lineTextStream >> definition.yPos;
+        lineTextStream >> definition.id;
+
+        definitions.emplace_back(definition);
+      }
+    )},
+};
+// clang-format on
+
+
 
 void skipWhiteSpace(istream& sourceStream)
 {
@@ -161,122 +269,7 @@ vector<string> parseMessageBoxTextDefinition(istream& sourceStream)
 std::optional<Action>
   parseSingleActionCommand(const string& command, istream& lineTextStream)
 {
-  if (command == "FADEIN")
-  {
-    return Action{FadeIn{}};
-  }
-  else if (command == "FADEOUT")
-  {
-    return Action{FadeOut{}};
-  }
-  else if (command == "DELAY")
-  {
-    int amount = 0;
-    lineTextStream >> amount;
-    if (amount <= 0)
-    {
-      throw invalid_argument("Invalid DELAY command in Duke Script file");
-    }
-    return Action{Delay{amount}};
-  }
-  else if (command == "BABBLEON")
-  {
-    int duration = 0;
-    lineTextStream >> duration;
-    if (duration <= 0)
-    {
-      throw invalid_argument("Invalid BABBLEON command in Duke Script file");
-    }
-    return Action{AnimateNewsReporter{duration}};
-  }
-  else if (command == "BABBLEOFF")
-  {
-    return Action{StopNewsReporterAnimation{}};
-  }
-  else if (command == "NOSOUNDS")
-  {
-    return Action{DisableMenuFunctionality{}};
-  }
-  else if (command == "KEYS")
-  {
-    return Action{ShowKeyBindings{}};
-  }
-  else if (command == "GETNAMES")
-  {
-    int slot = 0;
-    lineTextStream >> slot;
-    if (slot < 0 || slot >= 8)
-    {
-      throw invalid_argument("Invalid GETNAMES command in Duke Script file");
-    }
-    return Action{ShowSaveSlots{slot}};
-  }
-  else if (command == "PAK")
-  {
-    // [P]ress [A]ny [K]ey - this is a shorthand for displaying actor nr. 146,
-    // which is an image of the text "Press any key to continue".
-    return Action{DrawSprite{0, 0, 146, 0}};
-  }
-  else if (command == "LOADRAW")
-  {
-    string imageName;
-    lineTextStream >> imageName;
-    strings::trim(imageName);
-    if (imageName.empty())
-    {
-      throw invalid_argument("Invalid LOADRAW command in Duke Script file");
-    }
-    return Action{ShowFullScreenImage{imageName}};
-  }
-  else if (command == "Z")
-  {
-    int yPos = 0;
-    lineTextStream >> yPos;
-    return Action{ShowMenuSelectionIndicator{yPos}};
-  }
-  else if (command == "GETPAL")
-  {
-    string paletteFile;
-    lineTextStream >> paletteFile;
-    strings::trim(paletteFile);
-    if (paletteFile.empty())
-    {
-      throw invalid_argument("Invalid LOADRAW command in Duke Script file");
-    }
-    return Action{SetPalette{paletteFile}};
-  }
-  else if (command == "WAIT")
-  {
-    return Action{WaitForUserInput{}};
-  }
-  else if (command == "SHIFTWIN")
-  {
-    return Action{EnableTextOffset{}};
-  }
-  else if (command == "EXITTODEMO")
-  {
-    return Action{EnableTimeOutToDemo{}};
-  }
-  else if (command == "TOGGS")
-  {
-    int xPos = 0;
-    int count = 0;
-    lineTextStream >> xPos;
-    lineTextStream >> count;
-
-    vector<SetupCheckBoxes::CheckBoxDefinition> definitions;
-    for (int i = 0; i < count; ++i)
-    {
-      SetupCheckBoxes::CheckBoxDefinition definition{0, 0};
-      lineTextStream >> definition.yPos;
-      lineTextStream >> definition.id;
-
-      definitions.emplace_back(definition);
-    }
-
-    return Action{SetupCheckBoxes{xPos, definitions}};
-  }
-  else
+  if (singleActionCommands.find(command) == singleActionCommands.end())
   {
     assert(command != "END");
     static const unordered_set<string> notAllowedHere{
@@ -292,6 +285,11 @@ std::optional<Action>
     {
       throw invalid_argument(
         string("The command ") + command + " is not allowed in this context");
+    }
+  }else{
+    {
+      const auto action = singleActionCommands[command];
+      action(command, lineTextStream);
     }
   }
 
@@ -391,10 +389,10 @@ vector<Action> parseTextCommand(istream& lineTextStream)
   }
   else
   {
-    const auto bigTextMarkerIter =
-      std::find_if(sourceText.begin(), sourceText.end(), [](const auto ch) {
-        return static_cast<uint8_t>(ch) >= 0xF0;
-      });
+    const auto bigTextMarkerIter = std::find_if(
+      sourceText.begin(),
+      sourceText.end(),
+      [](const auto ch) { return static_cast<uint8_t>(ch) >= 0xF0; });
 
     if (bigTextMarkerIter != sourceText.end())
     {
@@ -463,7 +461,8 @@ PagesDefinition parsePagesDefinition(istream& sourceTextStream)
   parseScriptLines(
     sourceTextStream,
     "PAGESEND",
-    [&pages, &sourceTextStream](const auto& command, auto& lineTextStream) {
+    [&pages, &sourceTextStream](const auto& command, auto& lineTextStream)
+    {
       if (command == "APAGE")
       {
         pages.emplace_back(Script{});
@@ -488,7 +487,8 @@ data::script::Script parseScript(istream& sourceTextStream)
   parseScriptLines(
     sourceTextStream,
     "END",
-    [&script, &sourceTextStream](const auto& command, auto& lineTextStream) {
+    [&script, &sourceTextStream](const auto& command, auto& lineTextStream)
+    {
       vector<Action> actions;
 
       if (command == "PAGESSTART")

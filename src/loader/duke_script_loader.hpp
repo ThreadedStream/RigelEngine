@@ -26,6 +26,45 @@
 namespace rigel::loader
 {
 
+// enum class Command{
+//   FADE_IN,
+//   FADE_OUT,
+//   DELAY,
+//   BABBLE_ON,
+//   BABBLE_OFF,
+//   NO_SOUNDS,
+//   KEYS,
+//   GET_NAMES,
+//   PAK,
+//   LOAD_RAW,
+//   Z,
+//   GET_PAL,
+//   WAIT,
+//   SHIFT_WIN,
+//   EXIT_TO_DEMO,
+//   TOGGS,
+//   CENTER_WINDOW,
+//   MENU,
+//   XY_TEXT,
+// };
+
+
+using namespace data::script;
+
+
+#define LAMBDA_DEF(action, additional_body)                                    \
+  [](                                                                          \
+    const std::string& command,                                                \
+    std::istream& lineTextStream) -> std::optional<Action>                     \
+  {                                                                            \
+    additional_body return action;                                             \
+  }
+
+// nice hack to escape commas in macro expansions
+// https://stackoverflow.com/questions/13842468/comma-in-c-c-macro
+#define COMMA ,
+
+
 using ScriptBundle = std::unordered_map<std::string, data::script::Script>;
 
 
